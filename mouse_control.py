@@ -32,8 +32,7 @@ CAM_W, CAM_H  = 640, 480
 ZONE          = 0.75   # only this fraction of the frame maps to full screen
 SMOOTH        = 0.72   # EMA weight on prev position — higher = smoother glide
 DEADZONE      = 4.0    # pixels — ignore micro-jitter below this delta
-PINCH_L       = 0.065  # index-thumb distance for left click  (raised — easier to trigger)
-PINCH_R       = 0.065  # middle-thumb distance for right click
+PINCH_L       = 0.065  # index-thumb distance for left click
 CLICK_CD      = 0.20   # minimum seconds between any two registered clicks
 DBL_WIN       = 0.40   # seconds window for double-click detection
 
@@ -107,7 +106,6 @@ while True:
             move(sx, sy)
 
         dl = dist(lm[8], lm[4])    # index fingertip ↔ thumb tip
-        dr = dist(lm[12], lm[4])   # middle fingertip ↔ thumb tip
         fu = fingers_up(lm)        # [index, middle, ring, pinky]
 
         # ── Scroll: index + middle up, ring + pinky down ──────────────
@@ -124,8 +122,9 @@ while True:
                 lup()
                 dragging = False
 
-        # ── Right click: middle-thumb pinch ───────────────────────────
-        elif dr < PINCH_R and (now - last_r) > CLICK_CD:
+        # ── Right click: PINKY up, index+middle+ring all down ─────────
+        elif fu[3] and not fu[0] and not fu[1] and not fu[2] \
+                and (now - last_r) > CLICK_CD:
             rclick()
             last_r = now
             label = "RIGHT CLICK"
