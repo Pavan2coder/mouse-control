@@ -3,7 +3,6 @@ import mediapipe as mp
 import numpy as np
 import ctypes
 import time
-import math
 
 # ── Windows low-level mouse API (zero overhead, no pyautogui delay) ──────────
 user32   = ctypes.windll.user32
@@ -32,7 +31,6 @@ CAM_W, CAM_H  = 640, 480
 ZONE          = 0.75   # only this fraction of the frame maps to full screen
 SMOOTH        = 0.72   # EMA weight on prev position — higher = smoother glide
 DEADZONE      = 4.0    # pixels — ignore micro-jitter below this delta
-PINCH_L       = 0.065  # index-thumb distance for left click
 CLICK_CD      = 0.20   # minimum seconds between any two registered clicks
 DBL_WIN       = 0.40   # seconds window for double-click detection
 
@@ -50,9 +48,6 @@ LS   = draw.DrawingSpec((0, 210, 0), 2, 2)   # landmark style
 CS   = draw.DrawingSpec((180, 0, 200), 2)    # connection style
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
-def dist(a, b):
-    return math.hypot(a.x - b.x, a.y - b.y)
-
 def fingers_up(lm):
     """[index, middle, ring, pinky] up flags based on tip vs PIP joint."""
     tips = [8, 12, 16, 20]
@@ -105,11 +100,10 @@ while True:
             sx, sy = nx, ny
             move(sx, sy)
 
-        dl = dist(lm[8], lm[4])    # index fingertip ↔ thumb tip
         fu = fingers_up(lm)        # [index, middle, ring, pinky]
 
         # ── Scroll: index + middle up, ring + pinky down ──────────────
-        if fu[0] and fu[1] and not fu[2] and not fu[3] and dl > PINCH_L * 1.5:
+        if fu[0] and fu[1] and not fu[2] and not fu[3]:
             cy = lm[8].y
             if scroll_prev_y is not None:
                 delta = scroll_prev_y - cy
@@ -134,8 +128,9 @@ while True:
                 lup()
                 dragging = False
 
-        # ── Left click / double-click: index-thumb pinch ─────────────
-        elif dl < PINCH_L and (now - last_l) > CLICK_CD:
+        # ── Left click / double-click: RING finger up, others down ──────
+        elif fu[2] and not fu[0] and not fu[1] and not fu[3] \
+                and (now - last_l) > CLICK_CD:
             scroll_prev_y = None
             if dragging:
                 lup()
@@ -177,15 +172,6 @@ while True:
         cv2.circle(frame, (ix, iy), 11, (0, 255, 0), -1)
         cv2.circle(frame, (ix, iy), 11, (0, 160, 0),  2)
 
-        # Live pinch distance bar (bottom-left) — fill goes green when close enough
-        bar_max = 0.15
-        bar_w   = 160
-        fill    = int(np.clip(1.0 - dl / bar_max, 0, 1) * bar_w)
-        bar_col = (0, 255, 0) if dl < PINCH_L else (100, 100, 255)
-        cv2.rectangle(frame, (10, CAM_H - 35), (10 + bar_w, CAM_H - 20), (50, 50, 50), -1)
-        cv2.rectangle(frame, (10, CAM_H - 35), (10 + fill,  CAM_H - 20), bar_col, -1)
-        cv2.putText(frame, f"pinch {dl:.3f}", (10, CAM_H - 38),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.4, (180, 180, 180), 1)
 
     else:
         if dragging:
