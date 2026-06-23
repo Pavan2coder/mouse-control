@@ -30,12 +30,12 @@ def scroll(d):  _me(M_WHEEL, d=d)
 # ── Config ────────────────────────────────────────────────────────────────────
 CAM_W, CAM_H  = 640, 480
 ZONE          = 0.75   # only this fraction of the frame maps to full screen
-SMOOTH        = 0.45   # EMA weight on prev position (lower = faster, higher = smoother)
-DEADZONE      = 2.5    # pixels — ignore micro-jitter below this delta
-PINCH_L       = 0.045  # index-thumb distance for left click
-PINCH_R       = 0.050  # middle-thumb distance for right click
-CLICK_CD      = 0.18   # minimum seconds between any two registered clicks
-DBL_WIN       = 0.38   # seconds window for double-click detection
+SMOOTH        = 0.72   # EMA weight on prev position — higher = smoother glide
+DEADZONE      = 4.0    # pixels — ignore micro-jitter below this delta
+PINCH_L       = 0.065  # index-thumb distance for left click  (raised — easier to trigger)
+PINCH_R       = 0.065  # middle-thumb distance for right click
+CLICK_CD      = 0.20   # minimum seconds between any two registered clicks
+DBL_WIN       = 0.40   # seconds window for double-click detection
 
 # ── MediaPipe ─────────────────────────────────────────────────────────────────
 mp_h   = mp.solutions.hands
@@ -177,6 +177,16 @@ while True:
         ix, iy = int(lm[8].x * CAM_W), int(lm[8].y * CAM_H)
         cv2.circle(frame, (ix, iy), 11, (0, 255, 0), -1)
         cv2.circle(frame, (ix, iy), 11, (0, 160, 0),  2)
+
+        # Live pinch distance bar (bottom-left) — fill goes green when close enough
+        bar_max = 0.15
+        bar_w   = 160
+        fill    = int(np.clip(1.0 - dl / bar_max, 0, 1) * bar_w)
+        bar_col = (0, 255, 0) if dl < PINCH_L else (100, 100, 255)
+        cv2.rectangle(frame, (10, CAM_H - 35), (10 + bar_w, CAM_H - 20), (50, 50, 50), -1)
+        cv2.rectangle(frame, (10, CAM_H - 35), (10 + fill,  CAM_H - 20), bar_col, -1)
+        cv2.putText(frame, f"pinch {dl:.3f}", (10, CAM_H - 38),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.4, (180, 180, 180), 1)
 
     else:
         if dragging:
