@@ -28,46 +28,47 @@ def scroll(d):  _me(M_WHEEL, d=d)
 
 # ── Config ────────────────────────────────────────────────────────────────────
 CAM_W, CAM_H  = 640, 480
-ZONE          = 0.75   # only this fraction of the frame maps to full screen
-SMOOTH        = 0.72   # EMA weight on prev position — higher = smoother glide
-DEADZONE      = 4.0    # pixels — ignore micro-jitter below this delta
-CLICK_CD      = 0.20   # minimum seconds between any two registered clicks
-DBL_WIN       = 0.40   # seconds window for double-click detection
-PINCH_THRESH  = 0.06   # normalized dist — thumb tip ↔ index tip for pinch
+ZONE          = 0.75   # fraction of frame that maps to full screen
+SMOOTH        = 0.85   # EMA weight — higher = smoother, less jitter
+DEADZONE      = 6.0    # pixels — ignore micro-jitter below this
+CLICK_CD      = 0.25   # min seconds between clicks
+DBL_WIN       = 0.45   # seconds window for double-click
+PINCH_THRESH  = 0.06   # normalized thumb↔index dist for pinch
 
 # ── MediaPipe ─────────────────────────────────────────────────────────────────
-mp_h   = mp.solutions.hands
-hands  = mp_h.Hands(
+mp_h  = mp.solutions.hands
+hands = mp_h.Hands(
     static_image_mode=False,
     max_num_hands=1,
-    model_complexity=0,               # lite model — faster, still precise enough
-    min_detection_confidence=0.72,
-    min_tracking_confidence=0.72,
+    model_complexity=0,
+    min_detection_confidence=0.75,
+    min_tracking_confidence=0.75,
 )
 draw = mp.solutions.drawing_utils
-LS   = draw.DrawingSpec((0, 210, 0), 2, 2)   # landmark style
-CS   = draw.DrawingSpec((180, 0, 200), 2)    # connection style
+LS   = draw.DrawingSpec((0, 210, 0), 2, 2)
+CS   = draw.DrawingSpec((180, 0, 200), 2)
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 def fingers_up(lm):
-    """[index, middle, ring, pinky] up flags based on tip vs PIP joint."""
     tips = [8, 12, 16, 20]
     pips = [6, 10, 14, 18]
     return [lm[t].y < lm[p].y for t, p in zip(tips, pips)]
 
 # ── State ─────────────────────────────────────────────────────────────────────
-sx, sy          = float(SCREEN_W) / 2, float(SCREEN_H) / 2
-last_l = last_r = 0.0
-dragging        = False
-scroll_prev_y   = None
-pinched         = False
+sx, sy        = float(SCREEN_W) / 2, float(SCREEN_H) / 2
+last_l        = 0.0
+last_r        = 0.0
+dragging      = False
+scroll_prev_y = None
+pinched       = False   # previous frame pinch state
+pinky_up      = False   # previous frame pinky-only-up state
 
 # ── Camera ────────────────────────────────────────────────────────────────────
 cap = cv2.VideoCapture(0)
 cap.set(cv2.CAP_PROP_FRAME_WIDTH,  CAM_W)
 cap.set(cv2.CAP_PROP_FRAME_HEIGHT, CAM_H)
 cap.set(cv2.CAP_PROP_FPS, 60)
-cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)   # 1-frame buffer — no stale frames
+cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
 
 prev_t = time.time()
 
@@ -78,10 +79,9 @@ while True:
         continue
 
     frame = cv2.flip(frame, 1)
-
-    rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-    rgb.flags.writeable = False          # avoids an internal copy in MediaPipe
-    res = hands.process(rgb)
+    rgb   = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    rgb.flags.writeable = False
+    res   = hands.process(rgb)
 
     label       = ""
     label_color = (0, 255, 255)
@@ -89,30 +89,26 @@ while True:
     if res.multi_hand_landmarks:
         lm  = res.multi_hand_landmarks[0].landmark
         now = time.time()
+        fu  = fingers_up(lm)
 
-        # ── Gesture pre-checks — must come BEFORE cursor update ──────
+        # ── Detect click gestures BEFORE moving cursor ────────────────
         pinch_d    = np.hypot(lm[4].x - lm[8].x, lm[4].y - lm[8].y)
         is_pinched = pinch_d < PINCH_THRESH
-        fu_pre     = fingers_up(lm)
-        is_rclick  = fu_pre[3] and not fu_pre[0] and not fu_pre[1] and not fu_pre[2]
+        is_pinky   = fu[3] and not fu[0] and not fu[1] and not fu[2]
 
-        # ── Cursor: freeze on any click gesture so position is stable ─
-        if not is_pinched and not is_rclick:
+        # ── Cursor: freeze while any click gesture is active ──────────
+        if not is_pinched and not is_pinky:
             margin = (1.0 - ZONE) / 2.0
             tx = np.clip((lm[8].x - margin) / ZONE, 0.0, 1.0) * SCREEN_W
             ty = np.clip((lm[8].y - margin) / ZONE, 0.0, 1.0) * SCREEN_H
-
             nx = sx * SMOOTH + tx * (1.0 - SMOOTH)
             ny = sy * SMOOTH + ty * (1.0 - SMOOTH)
-
             if abs(nx - sx) > DEADZONE or abs(ny - sy) > DEADZONE:
                 sx, sy = nx, ny
                 move(sx, sy)
 
-        fu = fu_pre
-
+        # ── Left click: pinch onset (thumb meets index) ───────────────
         if is_pinched and not pinched and (now - last_l) > CLICK_CD:
-            # pinch onset → single or double click
             if (now - last_l) < DBL_WIN:
                 lclick(); lclick()
                 label = "DOUBLE CLICK"
@@ -124,11 +120,21 @@ while True:
             last_l = now
             scroll_prev_y = None
             if dragging:
-                lup()
-                dragging = False
+                lup(); dragging = False
 
-        elif not is_pinched:
-            # ── Scroll: index + middle up, ring + pinky down ──────────
+        # ── Right click: pinky RELEASE (was up, now down) ─────────────
+        elif pinky_up and not is_pinky and (now - last_r) > CLICK_CD:
+            rclick()
+            last_r = now
+            label = "RIGHT CLICK"
+            label_color = (0, 80, 255)
+            scroll_prev_y = None
+            if dragging:
+                lup(); dragging = False
+
+        # ── Other gestures (only when no click gesture active) ────────
+        elif not is_pinched and not is_pinky:
+            # Scroll: index + middle up
             if fu[0] and fu[1] and not fu[2] and not fu[3]:
                 cy = lm[8].y
                 if scroll_prev_y is not None:
@@ -139,75 +145,61 @@ while True:
                 label = "SCROLL"
                 label_color = (255, 165, 0)
                 if dragging:
-                    lup()
-                    dragging = False
+                    lup(); dragging = False
 
-            # ── Right click: PINKY up, others down ────────────────────
-            elif fu[3] and not fu[0] and not fu[1] and not fu[2] \
-                    and (now - last_r) > CLICK_CD:
-                rclick()
-                last_r = now
-                label = "RIGHT CLICK"
-                label_color = (0, 80, 255)
-                scroll_prev_y = None
-                if dragging:
-                    lup()
-                    dragging = False
-
-            # ── Drag: closed fist (all 4 fingers down) ────────────────
+            # Drag: closed fist
             elif not any(fu):
                 if not dragging:
-                    ldown()
-                    dragging = True
+                    ldown(); dragging = True
                 label = "DRAG"
                 label_color = (0, 0, 255)
                 scroll_prev_y = None
 
-            # ── Idle / move: release any held state ───────────────────
+            # Idle / move
             else:
                 if dragging:
-                    lup()
-                    dragging = False
+                    lup(); dragging = False
                 scroll_prev_y = None
 
-        pinched = is_pinched
+        # Show pinky-raised indicator while waiting for release
+        elif is_pinky:
+            label = "RIGHT CLICK..."
+            label_color = (0, 80, 255)
+
+        # Update gesture state
+        pinched  = is_pinched
+        pinky_up = is_pinky
 
         # Draw skeleton
         draw.draw_landmarks(
             frame, res.multi_hand_landmarks[0], mp_h.HAND_CONNECTIONS, LS, CS
         )
-        # Highlight index fingertip
         ix, iy = int(lm[8].x * CAM_W), int(lm[8].y * CAM_H)
         cv2.circle(frame, (ix, iy), 11, (0, 255, 0), -1)
         cv2.circle(frame, (ix, iy), 11, (0, 160, 0),  2)
 
-
     else:
         if dragging:
-            lup()
-            dragging = False
+            lup(); dragging = False
         scroll_prev_y = None
-        pinched = False
+        pinched       = False
+        pinky_up      = False
 
     # ── HUD ───────────────────────────────────────────────────────────────────
-    # Control zone box
     mw = int(CAM_W * (1 - ZONE) / 2)
     mh = int(CAM_H * (1 - ZONE) / 2)
     cv2.rectangle(frame, (mw, mh), (CAM_W - mw, CAM_H - mh), (70, 70, 70), 1)
 
-    # Gesture label (outlined for readability)
     if label:
         cv2.putText(frame, label, (18, 55), cv2.FONT_HERSHEY_SIMPLEX, 1.1, (0, 0, 0), 5)
         cv2.putText(frame, label, (18, 55), cv2.FONT_HERSHEY_SIMPLEX, 1.1, label_color, 2)
 
-    # FPS counter
     t = time.time()
     fps = 1.0 / max(t - prev_t, 1e-9)
     prev_t = t
     cv2.putText(frame, f"FPS {fps:.0f}", (CAM_W - 95, 28),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.7, (200, 200, 200), 2)
 
-    # Drag indicator
     if dragging:
         cv2.circle(frame, (CAM_W - 20, CAM_H - 20), 8, (0, 0, 255), -1)
 
