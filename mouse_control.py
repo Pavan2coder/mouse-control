@@ -90,23 +90,26 @@ while True:
         lm  = res.multi_hand_landmarks[0].landmark
         now = time.time()
 
-        # ── Cursor: map index tip through the central control zone ────
-        margin = (1.0 - ZONE) / 2.0
-        tx = np.clip((lm[8].x - margin) / ZONE, 0.0, 1.0) * SCREEN_W
-        ty = np.clip((lm[8].y - margin) / ZONE, 0.0, 1.0) * SCREEN_H
-
-        nx = sx * SMOOTH + tx * (1.0 - SMOOTH)
-        ny = sy * SMOOTH + ty * (1.0 - SMOOTH)
-
-        if abs(nx - sx) > DEADZONE or abs(ny - sy) > DEADZONE:
-            sx, sy = nx, ny
-            move(sx, sy)
-
-        fu = fingers_up(lm)        # [index, middle, ring, pinky]
-
-        # ── Pinch: thumb tip ↔ index tip ─────────────────────────────
+        # ── Gesture pre-checks — must come BEFORE cursor update ──────
         pinch_d    = np.hypot(lm[4].x - lm[8].x, lm[4].y - lm[8].y)
         is_pinched = pinch_d < PINCH_THRESH
+        fu_pre     = fingers_up(lm)
+        is_rclick  = fu_pre[3] and not fu_pre[0] and not fu_pre[1] and not fu_pre[2]
+
+        # ── Cursor: freeze on any click gesture so position is stable ─
+        if not is_pinched and not is_rclick:
+            margin = (1.0 - ZONE) / 2.0
+            tx = np.clip((lm[8].x - margin) / ZONE, 0.0, 1.0) * SCREEN_W
+            ty = np.clip((lm[8].y - margin) / ZONE, 0.0, 1.0) * SCREEN_H
+
+            nx = sx * SMOOTH + tx * (1.0 - SMOOTH)
+            ny = sy * SMOOTH + ty * (1.0 - SMOOTH)
+
+            if abs(nx - sx) > DEADZONE or abs(ny - sy) > DEADZONE:
+                sx, sy = nx, ny
+                move(sx, sy)
+
+        fu = fu_pre
 
         if is_pinched and not pinched and (now - last_l) > CLICK_CD:
             # pinch onset → single or double click
