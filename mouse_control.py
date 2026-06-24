@@ -116,6 +116,18 @@ while True:
                 lup()
                 dragging = False
 
+        # ── Left click: INDEX finger only up ─────────────────────────
+        elif fu[0] and not fu[1] and not fu[2] and not fu[3] \
+                and (now - last_l) > CLICK_CD:
+            lclick()
+            label = "LEFT CLICK"
+            label_color = (0, 255, 0)
+            last_l = now
+            scroll_prev_y = None
+            if dragging:
+                lup()
+                dragging = False
+
         # ── Right click: PINKY up, index+middle+ring all down ─────────
         elif fu[3] and not fu[0] and not fu[1] and not fu[2] \
                 and (now - last_r) > CLICK_CD:
