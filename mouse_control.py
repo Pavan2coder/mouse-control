@@ -33,6 +33,7 @@ SMOOTH        = 0.72   # EMA weight on prev position — higher = smoother glide
 DEADZONE      = 4.0    # pixels — ignore micro-jitter below this delta
 CLICK_CD      = 0.20   # minimum seconds between any two registered clicks
 DBL_WIN       = 0.40   # seconds window for double-click detection
+PINCH_THRESH  = 0.06   # normalized dist — thumb tip ↔ index tip for pinch
 
 # ── MediaPipe ─────────────────────────────────────────────────────────────────
 mp_h   = mp.solutions.hands
@@ -59,6 +60,7 @@ sx, sy          = float(SCREEN_W) / 2, float(SCREEN_H) / 2
 last_l = last_r = 0.0
 dragging        = False
 scroll_prev_y   = None
+pinched         = False
 
 # ── Camera ────────────────────────────────────────────────────────────────────
 cap = cv2.VideoCapture(0)
@@ -102,54 +104,13 @@ while True:
 
         fu = fingers_up(lm)        # [index, middle, ring, pinky]
 
-        # ── Scroll: index + middle up, ring + pinky down ──────────────
-        if fu[0] and fu[1] and not fu[2] and not fu[3]:
-            cy = lm[8].y
-            if scroll_prev_y is not None:
-                delta = scroll_prev_y - cy
-                if abs(delta) > 0.005:
-                    scroll(int(delta * 3000))
-            scroll_prev_y = cy
-            label = "SCROLL"
-            label_color = (255, 165, 0)
-            if dragging:
-                lup()
-                dragging = False
+        # ── Pinch: thumb tip ↔ index tip ─────────────────────────────
+        pinch_d    = np.hypot(lm[4].x - lm[8].x, lm[4].y - lm[8].y)
+        is_pinched = pinch_d < PINCH_THRESH
 
-        # ── Left click: INDEX finger only up ─────────────────────────
-        elif fu[0] and not fu[1] and not fu[2] and not fu[3] \
-                and (now - last_l) > CLICK_CD:
-            lclick()
-            label = "LEFT CLICK"
-            label_color = (0, 255, 0)
-            last_l = now
-            scroll_prev_y = None
-            if dragging:
-                lup()
-                dragging = False
-
-        # ── Right click: PINKY up, index+middle+ring all down ─────────
-        elif fu[3] and not fu[0] and not fu[1] and not fu[2] \
-                and (now - last_r) > CLICK_CD:
-            rclick()
-            last_r = now
-            label = "RIGHT CLICK"
-            label_color = (0, 80, 255)
-            scroll_prev_y = None
-            if dragging:
-                lup()
-                dragging = False
-
-        # ── Left click / double-click: RING finger up, others down ──────
-        elif fu[2] and not fu[0] and not fu[1] and not fu[3] \
-                and (now - last_l) > CLICK_CD:
-            scroll_prev_y = None
-            if dragging:
-                lup()
-                dragging = False
-                label = "DROP"
-                label_color = (0, 220, 120)
-            elif (now - last_l) < DBL_WIN:
+        if is_pinched and not pinched and (now - last_l) > CLICK_CD:
+            # pinch onset → single or double click
+            if (now - last_l) < DBL_WIN:
                 lclick(); lclick()
                 label = "DOUBLE CLICK"
                 label_color = (0, 255, 0)
@@ -158,22 +119,55 @@ while True:
                 label = "LEFT CLICK"
                 label_color = (0, 255, 0)
             last_l = now
-
-        # ── Drag: closed fist (all 4 fingers down) ────────────────────
-        elif not any(fu):
-            if not dragging:
-                ldown()
-                dragging = True
-            label = "DRAG"
-            label_color = (0, 0, 255)
             scroll_prev_y = None
-
-        # ── Idle: release any held state ──────────────────────────────
-        else:
             if dragging:
                 lup()
                 dragging = False
-            scroll_prev_y = None
+
+        elif not is_pinched:
+            # ── Scroll: index + middle up, ring + pinky down ──────────
+            if fu[0] and fu[1] and not fu[2] and not fu[3]:
+                cy = lm[8].y
+                if scroll_prev_y is not None:
+                    delta = scroll_prev_y - cy
+                    if abs(delta) > 0.005:
+                        scroll(int(delta * 3000))
+                scroll_prev_y = cy
+                label = "SCROLL"
+                label_color = (255, 165, 0)
+                if dragging:
+                    lup()
+                    dragging = False
+
+            # ── Right click: PINKY up, others down ────────────────────
+            elif fu[3] and not fu[0] and not fu[1] and not fu[2] \
+                    and (now - last_r) > CLICK_CD:
+                rclick()
+                last_r = now
+                label = "RIGHT CLICK"
+                label_color = (0, 80, 255)
+                scroll_prev_y = None
+                if dragging:
+                    lup()
+                    dragging = False
+
+            # ── Drag: closed fist (all 4 fingers down) ────────────────
+            elif not any(fu):
+                if not dragging:
+                    ldown()
+                    dragging = True
+                label = "DRAG"
+                label_color = (0, 0, 255)
+                scroll_prev_y = None
+
+            # ── Idle / move: release any held state ───────────────────
+            else:
+                if dragging:
+                    lup()
+                    dragging = False
+                scroll_prev_y = None
+
+        pinched = is_pinched
 
         # Draw skeleton
         draw.draw_landmarks(
@@ -190,6 +184,7 @@ while True:
             lup()
             dragging = False
         scroll_prev_y = None
+        pinched = False
 
     # ── HUD ───────────────────────────────────────────────────────────────────
     # Control zone box
